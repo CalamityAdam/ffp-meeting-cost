@@ -35,6 +35,36 @@
     text-transform: uppercase;
     margin: 0 0 0.5rem;
   }
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+    padding: 0.25rem;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+  }
+  .tab {
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.95rem;
+    padding: 0.5rem 1.1rem;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 200ms ease, color 200ms ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: auto;
+  }
+  .tab:hover:not(.active) { color: var(--fg); background: transparent; }
+  .tab.active {
+    background: var(--fg);
+    color: var(--bg);
+  }
+  .tab .tab-icon { font-size: 1.1rem; }
   .rate {
     color: var(--muted);
     font-size: 0.9rem;
@@ -120,7 +150,17 @@
 </head>
 <body>
   <h1>Meeting Cost-o-Meter</h1>
-  <div class="rate">$40 / minute · burning in real time</div>
+
+  <div class="tabs" role="tablist" aria-label="Team rate">
+    <button class="tab active" data-team="ffp" role="tab" aria-selected="true">
+      <span class="tab-icon">🏎️</span> Free 1st Party
+    </button>
+    <button class="tab" data-team="cowboys" role="tab" aria-selected="false">
+      <span class="tab-icon">🤠</span> Space Cowboys
+    </button>
+  </div>
+
+  <div id="rate" class="rate">🏎️ Free 1st Party · $40 / minute</div>
 
   <div id="cost" class="cost">$0.00</div>
   <div id="timer" class="timer">00:00</div>
@@ -137,16 +177,22 @@
   </div>
 
 <script>
-  const RATE_PER_MINUTE = 40;
-  const RATE_PER_MS = RATE_PER_MINUTE / 60 / 1000;
+  const TEAMS = {
+    ffp:     { label: 'Free 1st Party', icon: '🏎️', ratePerMinute: 40 },
+    cowboys: { label: 'Space Cowboys',  icon: '🤠', ratePerMinute: 10 },
+  };
+  let currentTeamKey = 'ffp';
+  const ratePerMs = () => TEAMS[currentTeamKey].ratePerMinute / 60 / 1000;
 
   const costEl = document.getElementById('cost');
   const timerEl = document.getElementById('timer');
+  const rateEl = document.getElementById('rate');
   const moodEmojiEl = document.getElementById('mood-emoji');
   const moodMessageEl = document.getElementById('mood-message');
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
   const restartBtn = document.getElementById('restart');
+  const tabEls = document.querySelectorAll('.tab');
 
   let startTimestamp = null;   // ms when current run began
   let accumulatedMs = 0;        // elapsed from previous runs (for pause/resume)
@@ -236,11 +282,26 @@
 
   function render() {
     const ms = elapsedMs();
-    const cost = ms * RATE_PER_MS;
+    const cost = ms * ratePerMs();
     costEl.textContent = formatCost(cost);
     timerEl.textContent = formatTimer(ms);
     applyMood(getMoodForCost(cost));
   }
+
+  function setTeam(teamKey) {
+    if (!TEAMS[teamKey] || teamKey === currentTeamKey) return;
+    currentTeamKey = teamKey;
+    const team = TEAMS[teamKey];
+    rateEl.textContent = `${team.icon} ${team.label} · $${team.ratePerMinute} / minute`;
+    tabEls.forEach(el => {
+      const active = el.dataset.team === teamKey;
+      el.classList.toggle('active', active);
+      el.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    render();
+  }
+
+  tabEls.forEach(el => el.addEventListener('click', () => setTeam(el.dataset.team)));
 
   function tick() {
     render();
