@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meeting Cost-o-Meter</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --fg: #f8fafc;
+    --muted: #94a3b8;
+    --accent: #22d3ee;
+    --danger: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    transition: background-color 600ms ease;
+    overflow: hidden;
+    padding: 2rem 1rem;
+  }
+  h1 {
+    font-size: clamp(1.2rem, 2.5vw, 1.6rem);
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin: 0 0 0.5rem;
+  }
+  .rate {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-bottom: 2rem;
+  }
+  .cost {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: clamp(4rem, 18vw, 14rem);
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1;
+    text-shadow: 0 0 40px rgba(255,255,255,0.15);
+    transition: color 400ms ease, transform 200ms ease;
+  }
+  .timer {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 1.5rem;
+    color: var(--muted);
+    margin-top: 0.5rem;
+  }
+  .mood {
+    margin-top: 2rem;
+    min-height: 5rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .mood .emoji {
+    font-size: 3rem;
+    transition: transform 300ms ease;
+  }
+  .mood .message {
+    font-size: 1.1rem;
+    color: var(--fg);
+    opacity: 0.85;
+    font-style: italic;
+    max-width: 30ch;
+  }
+  .controls {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 2.5rem;
+  }
+  button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 1rem;
+    padding: 0.75rem 1.5rem;
+    border: 2px solid var(--fg);
+    background: transparent;
+    color: var(--fg);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 150ms ease, color 150ms ease, transform 100ms ease;
+    min-width: 6rem;
+  }
+  button:hover:not(:disabled) { background: var(--fg); color: var(--bg); }
+  button:active:not(:disabled) { transform: scale(0.96); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  button.primary { border-color: var(--accent); color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: var(--accent); color: var(--bg); }
+  button.danger { border-color: var(--danger); color: var(--danger); }
+  button.danger:hover:not(:disabled) { background: var(--danger); color: var(--fg); }
+  .pulse {
+    animation: pulse 600ms ease;
+  }
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+    100% { transform: scale(1); }
+  }
+  .shake {
+    animation: shake 400ms ease;
+  }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-8px); }
+    75% { transform: translateX(8px); }
+  }
+</style>
+</head>
+<body>
+  <h1>Meeting Cost-o-Meter</h1>
+  <div class="rate">$40 / minute · burning in real time</div>
+
+  <div id="cost" class="cost">$0.00</div>
+  <div id="timer" class="timer">00:00</div>
+
+  <div class="mood">
+    <div id="mood-emoji" class="emoji">☕</div>
+    <div id="mood-message" class="message">Ready when you are.</div>
+  </div>
+
+  <div class="controls">
+    <button id="start" class="primary">Start</button>
+    <button id="stop" class="danger" disabled>Stop</button>
+    <button id="restart" disabled>Restart</button>
+  </div>
+
+<script>
+  const RATE_PER_MINUTE = 40;
+  const RATE_PER_MS = RATE_PER_MINUTE / 60 / 1000;
+
+  const costEl = document.getElementById('cost');
+  const timerEl = document.getElementById('timer');
+  const moodEmojiEl = document.getElementById('mood-emoji');
+  const moodMessageEl = document.getElementById('mood-message');
+  const startBtn = document.getElementById('start');
+  const stopBtn = document.getElementById('stop');
+  const restartBtn = document.getElementById('restart');
+
+  let startTimestamp = null;   // ms when current run began
+  let accumulatedMs = 0;        // elapsed from previous runs (for pause/resume)
+  let rafId = null;
+  let lastMoodKey = null;
+
+  function elapsedMs() {
+    if (startTimestamp === null) return accumulatedMs;
+    return accumulatedMs + (performance.now() - startTimestamp);
+  }
+
+  function formatCost(cost) {
+    return '$' + cost.toFixed(2);
+  }
+
+  function formatTimer(ms) {
+    const totalSeconds = Math.floor(ms / 1000);
+    const m = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+    const s = String(totalSeconds % 60).padStart(2, '0');
+    return `${m}:${s}`;
+  }
+
+  /**
+   * Given the current meeting cost in dollars, return how the page should react.
+   * Return shape: { key, emoji, message, bgColor, costColor, animate }
+   *   - key:       a string identifier for this mood tier (used so we only re-animate on change)
+   *   - emoji:     a single emoji shown above the message
+   *   - message:   short, funny/dry remark
+   *   - bgColor:   CSS color applied to <body> background
+   *   - costColor: CSS color applied to the big dollar counter
+   *   - animate:   one of 'pulse' | 'shake' | null — plays when this mood first activates
+   *
+   * Design this however you want. Consider at least a few tiers as cost climbs —
+   * chill at first, increasingly panicked as the dollars pile up. Tiers could
+   * be based on absolute dollars ($0, $10, $50, $200, $500+) or on time, or
+   * something weirder (compare to a sandwich, a flight, a mortgage payment).
+   */
+  function getMoodForCost(cost) {
+    if (cost < 1) {
+      return { key: 'idle', emoji: '☕', message: 'Small talk phase. Harmless.', bgColor: '#0f172a', costColor: '#f8fafc', animate: null };
+    }
+    if (cost < 10) {
+      return { key: 'warmup', emoji: '🙂', message: 'Productive discussion in progress.', bgColor: '#0f172a', costColor: '#cbd5e1', animate: 'pulse' };
+    }
+    if (cost < 25) {
+      return { key: 'coffee', emoji: '☕', message: 'That\'s a fancy latte. For each attendee.', bgColor: '#134e4a', costColor: '#5eead4', animate: 'pulse' };
+    }
+    if (cost < 50) {
+      return { key: 'lunch', emoji: '🌯', message: 'Congrats, you just bought the team lunch.', bgColor: '#155e75', costColor: '#67e8f9', animate: 'pulse' };
+    }
+    if (cost < 100) {
+      return { key: 'check', emoji: '🧾', message: 'This could have been an email.', bgColor: '#1e3a8a', costColor: '#93c5fd', animate: 'pulse' };
+    }
+    if (cost < 200) {
+      return { key: 'nice-dinner', emoji: '🍷', message: 'A nice dinner out. Gone.', bgColor: '#581c87', costColor: '#d8b4fe', animate: 'pulse' };
+    }
+    if (cost < 350) {
+      return { key: 'oof', emoji: '😬', message: 'Somebody should wrap this up.', bgColor: '#7c2d12', costColor: '#fdba74', animate: 'pulse' };
+    }
+    if (cost < 500) {
+      return { key: 'flight', emoji: '✈️', message: 'That\'s a round-trip ticket to Denver.', bgColor: '#991b1b', costColor: '#fca5a5', animate: 'pulse' };
+    }
+    if (cost < 750) {
+      return { key: 'panic', emoji: '🚨', message: 'THIS BETTER BE IMPORTANT.', bgColor: '#b91c1c', costColor: '#fff', animate: 'shake' };
+    }
+    if (cost < 1500) {
+      return { key: 'rent', emoji: '🏠', message: 'You just spent a week of rent. Leave.', bgColor: '#dc2626', costColor: '#fff', animate: 'shake' };
+    }
+    return { key: 'inferno', emoji: '🔥', message: 'Run. Just run.', bgColor: '#450a0a', costColor: '#fbbf24', animate: 'shake' };
+  }
+
+  function applyMood(mood) {
+    moodEmojiEl.textContent = mood.emoji;
+    moodMessageEl.textContent = mood.message;
+    document.body.style.backgroundColor = mood.bgColor;
+    costEl.style.color = mood.costColor;
+
+    if (mood.key !== lastMoodKey) {
+      lastMoodKey = mood.key;
+      if (mood.animate) {
+        costEl.classList.remove('pulse', 'shake');
+        void costEl.offsetWidth; // force reflow to restart animation
+        costEl.classList.add(mood.animate);
+      }
+    }
+  }
+
+  function render() {
+    const ms = elapsedMs();
+    const cost = ms * RATE_PER_MS;
+    costEl.textContent = formatCost(cost);
+    timerEl.textContent = formatTimer(ms);
+    applyMood(getMoodForCost(cost));
+  }
+
+  function tick() {
+    render();
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function start() {
+    if (startTimestamp !== null) return;
+    startTimestamp = performance.now();
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    restartBtn.disabled = false;
+    tick();
+  }
+
+  function stop() {
+    if (startTimestamp === null) return;
+    accumulatedMs += performance.now() - startTimestamp;
+    startTimestamp = null;
+    cancelAnimationFrame(rafId);
+    rafId = null;
+    startBtn.disabled = false;
+    startBtn.textContent = 'Resume';
+    stopBtn.disabled = true;
+    render();
+  }
+
+  function restart() {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+    startTimestamp = null;
+    accumulatedMs = 0;
+    lastMoodKey = null;
+    startBtn.disabled = false;
+    startBtn.textContent = 'Start';
+    stopBtn.disabled = true;
+    restartBtn.disabled = true;
+    render();
+  }
+
+  startBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+  restartBtn.addEventListener('click', restart);
+
+  render();
+</script>
+</body>
+</html>
