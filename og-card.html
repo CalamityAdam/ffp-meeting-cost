@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(circle at 30% 20%, #1e293b 0%, #0f172a 60%, #020617 100%);
+    color: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 60px 80px;
+    position: relative;
+    overflow: hidden;
+  }
+  body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 85% 85%, rgba(251, 191, 36, 0.12) 0%, transparent 40%),
+      radial-gradient(circle at 15% 90%, rgba(239, 68, 68, 0.08) 0%, transparent 35%);
+    pointer-events: none;
+  }
+  .ticker-card {
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: 18px;
+    padding: 28px 44px;
+    margin-bottom: 48px;
+    box-shadow: 0 0 60px rgba(251, 191, 36, 0.15);
+    text-align: center;
+  }
+  .ticker-label {
+    font-size: 14px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #94a3b8;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .ticker-value {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 72px;
+    font-weight: 800;
+    color: #fbbf24;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    text-shadow: 0 0 30px rgba(251, 191, 36, 0.5);
+    line-height: 1;
+  }
+  h1 {
+    font-size: 84px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    margin-bottom: 18px;
+    background: linear-gradient(135deg, #f8fafc 0%, #22d3ee 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .tagline {
+    font-size: 28px;
+    color: #cbd5e1;
+    margin-bottom: 40px;
+    text-align: center;
+  }
+  .tabs {
+    display: flex;
+    gap: 18px;
+    margin-bottom: 20px;
+  }
+  .tab {
+    padding: 14px 28px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    font-size: 22px;
+    font-weight: 600;
+    color: #f8fafc;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .tab.active {
+    background: #f8fafc;
+    color: #0f172a;
+  }
+  .url {
+    position: absolute;
+    bottom: 36px;
+    right: 48px;
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 22px;
+    color: #94a3b8;
+    letter-spacing: 0.05em;
+  }
+  .emoji-flair {
+    position: absolute;
+    top: 40px;
+    left: 48px;
+    font-size: 64px;
+  }
+</style>
+</head>
+<body>
+  <div class="emoji-flair">💸</div>
+
+  <div class="ticker-card">
+    <div class="ticker-label">Total Free 1st Party Cost</div>
+    <div class="ticker-value">$7,325,480.23</div>
+  </div>
+
+  <h1>Meeting Cost-o-Meter</h1>
+  <div class="tagline">Watch your meeting burn $40 / minute in real time.</div>
+
+  <div class="tabs">
+    <div class="tab active">🏎️ Free 1st Party</div>
+    <div class="tab">🤠 Space Cowboys</div>
+  </div>
+
+  <div class="url">cost.adumb.dev</div>
+</body>
+</html>

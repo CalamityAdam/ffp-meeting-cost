@@ -3,7 +3,27 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Meeting Cost-o-Meter</title>
+<title>Meeting Cost-o-Meter — watch your meeting burn $40/min</title>
+<meta name="description" content="A live meeting cost calculator. Starts at $0, climbs in real time, and reacts with increasing panic as the dollars pile up." />
+<meta name="theme-color" content="#0f172a" />
+<meta name="color-scheme" content="dark" />
+
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
+<link rel="apple-touch-icon" href="favicon.svg" />
+
+<meta property="og:type" content="website" />
+<meta property="og:title" content="Meeting Cost-o-Meter" />
+<meta property="og:description" content="Watch your meeting burn $40 / minute in real time." />
+<meta property="og:url" content="https://cost.adumb.dev/" />
+<meta property="og:image" content="https://cost.adumb.dev/og-card.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:site_name" content="cost.adumb.dev" />
+
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Meeting Cost-o-Meter" />
+<meta name="twitter:description" content="Watch your meeting burn $40 / minute in real time." />
+<meta name="twitter:image" content="https://cost.adumb.dev/og-card.png" />
 <style>
   :root {
     --bg: #0f172a;
@@ -171,6 +191,19 @@
     25% { transform: translateX(-8px); }
     75% { transform: translateX(8px); }
   }
+  .money-drop {
+    position: fixed;
+    top: -2rem;
+    font-size: 2rem;
+    pointer-events: none;
+    user-select: none;
+    z-index: 100;
+    animation: fall linear forwards;
+  }
+  @keyframes fall {
+    0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+    100% { transform: translateY(110vh) rotate(540deg); opacity: 0.6; }
+  }
 </style>
 </head>
 <body>
@@ -240,7 +273,7 @@
   const startBtn = document.getElementById('start');
   const stopBtn = document.getElementById('stop');
   const restartBtn = document.getElementById('restart');
-  const tabEls = document.querySelectorAll('.tab');
+  let tabEls = document.querySelectorAll('.tab');
 
   let startTimestamp = null;   // ms when current run began
   let accumulatedMs = 0;        // elapsed from previous runs (for pause/resume)
@@ -395,6 +428,61 @@
   restartBtn.addEventListener('click', restart);
 
   render();
+
+  // ─── easter egg ─────────────────────────────────────────────────
+  // ↑ ↑ ↓ ↓ ← → ← → B A
+  const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+  let konamiIdx = 0;
+  let ceoUnlocked = false;
+
+  window.addEventListener('keydown', (e) => {
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    konamiIdx = (key === KONAMI[konamiIdx]) ? konamiIdx + 1 : 0;
+    if (konamiIdx === KONAMI.length) {
+      konamiIdx = 0;
+      if (!ceoUnlocked) unlockCEO();
+    }
+  });
+
+  function unlockCEO() {
+    ceoUnlocked = true;
+    TEAMS.ceo = { label: 'The CEO', icon: '👔', ratePerMinute: 500 };
+    const btn = document.createElement('button');
+    btn.className = 'tab';
+    btn.dataset.team = 'ceo';
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', 'false');
+    btn.innerHTML = '<span class="tab-icon">👔</span> The CEO';
+    btn.addEventListener('click', () => setTeam('ceo'));
+    document.querySelector('.tabs').appendChild(btn);
+    tabEls = document.querySelectorAll('.tab');
+    rainMoney();
+    setTeam('ceo');
+  }
+
+  function rainMoney() {
+    const emojis = ['💸','💰','💵','🤑','💎'];
+    for (let i = 0; i < 40; i++) {
+      const el = document.createElement('div');
+      el.className = 'money-drop';
+      el.textContent = emojis[Math.floor(Math.random() * emojis.length)];
+      el.style.left = Math.random() * 100 + 'vw';
+      el.style.animationDuration = (1.5 + Math.random() * 2) + 's';
+      el.style.animationDelay = (Math.random() * 0.6) + 's';
+      el.style.fontSize = (1.5 + Math.random() * 2) + 'rem';
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 4500);
+    }
+  }
+
+  // console greeting for the devtools-curious
+  console.log(
+    '%c💸 Meeting Cost-o-Meter %c\n' +
+    'Hint: try a certain 1985 arrow-heavy sequence on this page.\n' +
+    'Source: https://github.com/CalamityAdam/meeting-cost',
+    'font-size: 16px; font-weight: bold; color: #fbbf24;',
+    'font-size: 12px; color: #94a3b8;'
+  );
 </script>
 </body>
 </html>
