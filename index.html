@@ -639,8 +639,10 @@
     applyMood(getMoodForCost(cost));
   }
 
-  function setTeam(teamKey, { persist = true } = {}) {
-    if (!TEAMS[teamKey] || teamKey === currentTeamKey) return;
+  // Returns true if state actually changed, false on a no-op (same team key).
+  // Callers use the return value to skip needless persistSession() writes.
+  function applyTeam(teamKey) {
+    if (!TEAMS[teamKey] || teamKey === currentTeamKey) return false;
     currentTeamKey = teamKey;
     const team = TEAMS[teamKey];
     rateEl.textContent = `${team.icon} ${team.label} · ${team.displayRate}`;
@@ -650,10 +652,19 @@
       el.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     render();
-    if (persist && teamKey !== 'ceo') writeSession();
+    return true;
   }
 
-  tabEls.forEach(el => el.addEventListener('click', () => setTeam(el.dataset.team)));
+  tabEls.forEach(el => el.addEventListener('click', () => {
+    if (applyTeam(el.dataset.team)) persistSession();
+  }));
+
+  // localStorage wrappers that swallow private-mode and quota errors.
+  const safeLS = {
+    get(k)    { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    remove(k) { try { localStorage.removeItem(k); } catch {} },
+  };
 
   // ─── custom rate (below the fold) ──────────────────────────────
   const LS_KEY = 'meeting-cost:custom-rate-hourly';
@@ -666,7 +677,7 @@
     return n % 1 === 0 ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  function setCustomRate(hourlyRate, { persist = true } = {}) {
+  function applyCustomRate(hourlyRate) {
     const display = `$${formatHourly(hourlyRate)} / hour`;
     TEAMS.custom = {
       label: 'Custom',
@@ -681,37 +692,41 @@
       tab.dataset.team = 'custom';
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', 'false');
-      tab.addEventListener('click', () => setTeam('custom'));
+      tab.addEventListener('click', () => {
+        if (applyTeam('custom')) persistSession();
+      });
       document.querySelector('.tabs').appendChild(tab);
       tabEls = document.querySelectorAll('.tab');
     }
     tab.innerHTML = `<span class="tab-icon">✏️</span> Custom · $${formatHourly(hourlyRate)}/hr`;
-    // If already on custom, force a re-render since setTeam bails on same key
+    // If already on custom, applyTeam early-bails — do the rate-display refresh by hand.
     if (currentTeamKey === 'custom') {
       rateEl.textContent = `✏️ Custom · ${display}`;
       render();
     } else {
-      setTeam('custom', { persist });
-    }
-    if (persist) {
-      try { localStorage.setItem(LS_KEY, String(hourlyRate)); } catch {}
+      applyTeam('custom');
     }
   }
 
-  function clearCustomRate({ persist = true } = {}) {
+  function applyClearCustomRate() {
     delete TEAMS.custom;
     const tab = document.querySelector('.tab[data-team="custom"]');
     if (tab) tab.remove();
     tabEls = document.querySelectorAll('.tab');
-    if (persist) {
-      try { localStorage.removeItem(LS_KEY); } catch {}
-    }
     customInput.value = '';
     customError.textContent = '';
     if (currentTeamKey === 'custom') {
-      currentTeamKey = null; // force setTeam to apply
-      setTeam('ffp', { persist });
+      currentTeamKey = null; // force applyTeam to actually run
+      applyTeam('ffp');
     }
+  }
+
+  function persistCustomRate(hourlyRate) {
+    safeLS.set(LS_KEY, String(hourlyRate));
+  }
+
+  function clearPersistedCustomRate() {
+    safeLS.remove(LS_KEY);
   }
 
   customForm.addEventListener('submit', (e) => {
@@ -722,40 +737,45 @@
       return;
     }
     customError.textContent = '';
-    setCustomRate(rate);
+    applyCustomRate(rate);
+    persistCustomRate(rate);
+    persistSession();
   });
 
-  customResetBtn.addEventListener('click', () => clearCustomRate());
+  customResetBtn.addEventListener('click', () => {
+    applyClearCustomRate();
+    clearPersistedCustomRate();
+    persistSession();
+  });
 
   // ─── session persistence ───────────────────────────────────────
   const SESSION_KEY = 'meeting-cost:session-v1';
   const STALE_AFTER_MS = 12 * 60 * 60 * 1000; // 12h cap on running sessions
 
   function readSession() {
+    const raw = safeLS.get(SESSION_KEY);
+    if (!raw) return null;
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
-      if (!raw) return null;
       const s = JSON.parse(raw);
-      if (!s || s.v !== 1) return null;
-      return s;
+      return s && s.v === 1 ? s : null;
     } catch { return null; }
   }
 
-  function writeSession() {
-    try {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({
-        v: 1,
-        teamKey: currentTeamKey,
-        accumulatedMs,
-        isRunning: startTimestamp !== null,
-        runStartedAtMs: startTimestamp,
-        savedAtMs: Date.now(),
-      }));
-    } catch { /* private mode / quota — degrade silently */ }
+  // 'ceo' is the Konami easter egg — intentionally not persistable.
+  function persistSession() {
+    if (currentTeamKey === 'ceo') return;
+    safeLS.set(SESSION_KEY, JSON.stringify({
+      v: 1,
+      teamKey: currentTeamKey,
+      accumulatedMs,
+      isRunning: startTimestamp !== null,
+      runStartedAtMs: startTimestamp,
+      savedAtMs: Date.now(),
+    }));
   }
 
-  function clearSession() {
-    try { localStorage.removeItem(SESSION_KEY); } catch {}
+  function clearPersistedSession() {
+    safeLS.remove(SESSION_KEY);
   }
 
   function applySession(session) {
@@ -764,7 +784,7 @@
 
     const tk = session.teamKey;
     if (tk && TEAMS[tk] && tk !== currentTeamKey) {
-      setTeam(tk, { persist: false });
+      applyTeam(tk);
     }
 
     accumulatedMs = Math.max(0, session.accumulatedMs | 0);
@@ -792,32 +812,31 @@
   }
 
   // Restore on load: custom rate first (so TEAMS.custom exists for session restore), then session.
-  let storedRate = NaN;
-  try { storedRate = parseFloat(localStorage.getItem(LS_KEY)); } catch {}
+  const storedRate = parseFloat(safeLS.get(LS_KEY));
   if (isFinite(storedRate) && storedRate > 0) {
     customInput.value = storedRate;
-    setCustomRate(storedRate, { persist: false });
+    applyCustomRate(storedRate);
   }
   applySession(readSession());
 
-  // Cross-tab sync: react to localStorage changes from other tabs/windows.
+  // Cross-tab sync: react to localStorage changes from other tabs/windows. Calls
+  // apply* only — never persist* — so we never echo a remote change back to storage.
   window.addEventListener('storage', (e) => {
     if (e.storageArea && e.storageArea !== localStorage) return;
     if (e.key === SESSION_KEY) {
       if (e.newValue === null) {
-        // Restart fired in another tab — reset locally without echoing to storage.
-        applySession({ v: 1, teamKey: currentTeamKey, accumulatedMs: 0, isRunning: false, runStartedAtMs: null });
+        applySession({}); // Restart in another tab — applySession treats empty as idle.
       } else {
         try { applySession(JSON.parse(e.newValue)); } catch {}
       }
     } else if (e.key === LS_KEY) {
       if (e.newValue === null) {
-        clearCustomRate({ persist: false });
+        applyClearCustomRate();
       } else {
         const r = parseFloat(e.newValue);
         if (isFinite(r) && r > 0) {
           customInput.value = r;
-          setCustomRate(r, { persist: false });
+          applyCustomRate(r);
         }
       }
     }
@@ -834,7 +853,7 @@
     startBtn.disabled = true;
     stopBtn.disabled = false;
     restartBtn.disabled = false;
-    writeSession();
+    persistSession();
     tick();
   }
 
@@ -847,7 +866,7 @@
     startBtn.disabled = false;
     startBtn.textContent = 'Resume';
     stopBtn.disabled = true;
-    writeSession();
+    persistSession();
     render();
   }
 
@@ -861,7 +880,7 @@
     startBtn.textContent = 'Start';
     stopBtn.disabled = true;
     restartBtn.disabled = true;
-    clearSession();
+    clearPersistedSession();
     render();
   }
 
@@ -895,11 +914,11 @@
     btn.setAttribute('role', 'tab');
     btn.setAttribute('aria-selected', 'false');
     btn.innerHTML = '<span class="tab-icon">👔</span> The CEO';
-    btn.addEventListener('click', () => setTeam('ceo'));
+    btn.addEventListener('click', () => applyTeam('ceo'));
     document.querySelector('.tabs').appendChild(btn);
     tabEls = document.querySelectorAll('.tab');
     rainMoney();
-    setTeam('ceo');
+    applyTeam('ceo');
   }
 
   function rainMoney() {
