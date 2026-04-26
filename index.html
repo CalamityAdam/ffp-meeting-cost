@@ -97,6 +97,13 @@
     letter-spacing: 0.02em;
     text-shadow: 0 0 20px rgba(251, 191, 36, 0.35);
   }
+  .ticker-status {
+    margin-top: 0.4rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    font-style: italic;
+  }
   h1 {
     font-size: clamp(1.2rem, 2.5vw, 1.6rem);
     font-weight: 500;
@@ -310,6 +317,7 @@
     <div class="ticker" aria-live="off">
       <div class="ticker-label">Total Free 1st Party Cost</div>
       <div id="ticker-value" class="ticker-value">$6,000,000.00</div>
+      <div id="ticker-status" class="ticker-status" aria-live="polite" hidden></div>
     </div>
 
     <h1>Meeting Cost-o-Meter</h1>
@@ -366,20 +374,163 @@
   let currentTeamKey = 'ffp';
   const ratePerMs = () => TEAMS[currentTeamKey].ratePerMinute / 60 / 1000;
 
-  // FFP debt clock: $6M base + $40/min from April 1, 2026 midnight Central (CDT, UTC-5)
+  // FFP debt clock: $6M base + $40/min, accruing only during Central-Time
+  // working hours (Mon–Fri 8a–5p, lunch 11:30a–12:30p, no holidays/weekends).
   const FFP_BASE_DOLLARS = 6_000_000;
   const FFP_RATE_PER_MS = 40 / 60 / 1000;
   const FFP_EPOCH_MS = Date.parse('2026-04-01T00:00:00-05:00');
+  const FFP_EPOCH_DATE = '2026-04-01';
+  const MS_PER_MINUTE = 60 * 1000;
+  const WORK_START_MIN = 8 * 60;        // 08:00
+  const LUNCH_START_MIN = 11 * 60 + 30; // 11:30
+  const LUNCH_END_MIN = 12 * 60 + 30;   // 12:30
+  const WORK_END_MIN = 17 * 60;         // 17:00
+  const WORK_DAY_MIN = (LUNCH_START_MIN - WORK_START_MIN) + (WORK_END_MIN - LUNCH_END_MIN); // 480
+  const WORK_DAY_MS = WORK_DAY_MIN * MS_PER_MINUTE;
+
+  // Holidays keyed by Central-Time YYYY-MM-DD. Value = status message.
+  const HOLIDAYS = {
+    // 2026
+    '2026-04-03': 'Observing Good Friday ✝️',
+    '2026-05-25': 'Honoring fallen heroes 🎖️',
+    '2026-07-03': 'Grilling for the Fourth 🇺🇸',
+    '2026-09-07': 'Laboring not, on Labor Day 🛠️',
+    '2026-11-26': 'Carving the bird 🦃',
+    '2026-11-27': 'Recovering from the bird 🛍️',
+    '2026-12-24': 'Tucking in for Santa 🎁',
+    '2026-12-25': 'Celebrating the birth of Jesus 🎄',
+    '2026-12-31': 'Counting down to a new year 🎆',
+    // 2027
+    '2027-01-01': 'Nursing a new-year hangover 🥂',
+    '2027-01-04': 'Stretching the new-year weekend 🎊',
+    '2027-03-26': 'Observing Good Friday ✝️',
+    '2027-05-31': 'Honoring fallen heroes 🎖️',
+    '2027-07-05': 'Grilling for the Fourth 🇺🇸',
+    '2027-09-06': 'Laboring not, on Labor Day 🛠️',
+    '2027-11-25': 'Carving the bird 🦃',
+    '2027-11-26': 'Recovering from the bird 🛍️',
+    '2027-12-24': 'Tucking in for Santa 🎁',
+    // Christmas Day 2027 falls on Saturday — already a weekend.
+    '2027-12-31': 'Counting down to a new year 🎆',
+  };
+
+  const WEEKEND_MSG = 'Weekend mode — see you Monday 🛋️';
+  const LUNCH_MSG = 'Out for lunch 🥪';
+  const BEFORE_HOURS_MSG = 'Office isn’t open yet ☕';
+  const AFTER_HOURS_MSG = 'Closed for the day — back at 8 🌙';
+
+  const centralPartsFmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    weekday: 'short', hour12: false,
+  });
+
+  function centralParts(ts) {
+    const out = {};
+    for (const p of centralPartsFmt.formatToParts(ts)) {
+      if (p.type !== 'literal') out[p.type] = p.value;
+    }
+    // hour12:false can render midnight as "24" in some engines.
+    const hour = out.hour === '24' ? 0 : parseInt(out.hour, 10);
+    return {
+      iso: `${out.year}-${out.month}-${out.day}`,
+      weekday: out.weekday,
+      minuteOfDay: hour * 60 + parseInt(out.minute, 10),
+      secondOfMinute: parseInt(out.second, 10),
+    };
+  }
+
+  function isWeekend(weekday) {
+    return weekday === 'Sat' || weekday === 'Sun';
+  }
+
+  // ms accrued today inside the two work windows, given current minute-of-day.
+  function activeMsToday(minuteOfDay, secondOfMinute) {
+    const nowMs = minuteOfDay * MS_PER_MINUTE + secondOfMinute * 1000;
+    const segments = [
+      [WORK_START_MIN * MS_PER_MINUTE, LUNCH_START_MIN * MS_PER_MINUTE],
+      [LUNCH_END_MIN * MS_PER_MINUTE, WORK_END_MIN * MS_PER_MINUTE],
+    ];
+    let acc = 0;
+    for (const [start, end] of segments) {
+      if (nowMs <= start) break;
+      acc += Math.min(nowMs, end) - start;
+      if (nowMs < end) break;
+    }
+    return acc;
+  }
+
+  // Increment a YYYY-MM-DD string by one calendar day. Uses UTC math, but the
+  // string is just a date label so DST doesn't affect the result.
+  function nextDate(iso) {
+    const d = new Date(iso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function weekdayOfIso(iso) {
+    // Pin to noon UTC so timezone offsets can't shift the weekday.
+    const d = new Date(iso + 'T12:00:00Z');
+    return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getUTCDay()];
+  }
+
+  // Counts completed working days from FFP_EPOCH_DATE up to (not including)
+  // todayIso. Cached because it only changes when the local date rolls over.
+  let cachedCompletedDays = null;
+  let cachedCompletedFor = null;
+  function completedWorkDays(todayIso) {
+    if (cachedCompletedFor === todayIso) return cachedCompletedDays;
+    let count = 0;
+    let cursor = FFP_EPOCH_DATE;
+    while (cursor < todayIso) {
+      const wd = weekdayOfIso(cursor);
+      if (!isWeekend(wd) && !HOLIDAYS[cursor]) count++;
+      cursor = nextDate(cursor);
+    }
+    cachedCompletedFor = todayIso;
+    cachedCompletedDays = count;
+    return count;
+  }
+
+  function pauseStatus(parts) {
+    if (HOLIDAYS[parts.iso]) return HOLIDAYS[parts.iso];
+    if (isWeekend(parts.weekday)) return WEEKEND_MSG;
+    if (parts.minuteOfDay < WORK_START_MIN) return BEFORE_HOURS_MSG;
+    if (parts.minuteOfDay >= LUNCH_START_MIN && parts.minuteOfDay < LUNCH_END_MIN) return LUNCH_MSG;
+    if (parts.minuteOfDay >= WORK_END_MIN) return AFTER_HOURS_MSG;
+    return null;
+  }
+
   const currencyFmt = new Intl.NumberFormat('en-US', {
     style: 'currency', currency: 'USD',
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
   const tickerEl = document.getElementById('ticker-value');
+  const tickerStatusEl = document.getElementById('ticker-status');
 
   function renderTicker() {
-    const elapsed = Date.now() - FFP_EPOCH_MS;
-    const total = FFP_BASE_DOLLARS + Math.max(0, elapsed) * FFP_RATE_PER_MS;
+    const now = Date.now();
+    if (now < FFP_EPOCH_MS) {
+      tickerEl.textContent = currencyFmt.format(FFP_BASE_DOLLARS);
+      tickerStatusEl.hidden = true;
+      requestAnimationFrame(renderTicker);
+      return;
+    }
+    const parts = centralParts(now);
+    const onWorkDay = !isWeekend(parts.weekday) && !HOLIDAYS[parts.iso];
+    const todayMs = onWorkDay ? activeMsToday(parts.minuteOfDay, parts.secondOfMinute) : 0;
+    const activeMs = completedWorkDays(parts.iso) * WORK_DAY_MS + todayMs;
+    const total = FFP_BASE_DOLLARS + activeMs * FFP_RATE_PER_MS;
     tickerEl.textContent = currencyFmt.format(total);
+
+    const status = pauseStatus(parts);
+    if (status) {
+      tickerStatusEl.textContent = status;
+      tickerStatusEl.hidden = false;
+    } else {
+      tickerStatusEl.hidden = true;
+    }
     requestAnimationFrame(renderTicker);
   }
   renderTicker();
