@@ -545,14 +545,14 @@
   const restartBtn = document.getElementById('restart');
   let tabEls = document.querySelectorAll('.tab');
 
-  let startTimestamp = null;   // ms when current run began
+  let startTimestamp = null;   // wall-clock Date.now() ms when current run began (persisted across reloads)
   let accumulatedMs = 0;        // elapsed from previous runs (for pause/resume)
   let rafId = null;
   let lastMoodKey = null;
 
   function elapsedMs() {
     if (startTimestamp === null) return accumulatedMs;
-    return accumulatedMs + (performance.now() - startTimestamp);
+    return accumulatedMs + (Date.now() - startTimestamp);
   }
 
   function formatCost(cost) {
@@ -639,7 +639,7 @@
     applyMood(getMoodForCost(cost));
   }
 
-  function setTeam(teamKey) {
+  function setTeam(teamKey, { persist = true } = {}) {
     if (!TEAMS[teamKey] || teamKey === currentTeamKey) return;
     currentTeamKey = teamKey;
     const team = TEAMS[teamKey];
@@ -650,6 +650,7 @@
       el.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     render();
+    if (persist && teamKey !== 'ceo') writeSession();
   }
 
   tabEls.forEach(el => el.addEventListener('click', () => setTeam(el.dataset.team)));
@@ -665,7 +666,7 @@
     return n % 1 === 0 ? n.toLocaleString('en-US') : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  function setCustomRate(hourlyRate) {
+  function setCustomRate(hourlyRate, { persist = true } = {}) {
     const display = `$${formatHourly(hourlyRate)} / hour`;
     TEAMS.custom = {
       label: 'Custom',
@@ -690,22 +691,26 @@
       rateEl.textContent = `✏️ Custom · ${display}`;
       render();
     } else {
-      setTeam('custom');
+      setTeam('custom', { persist });
     }
-    localStorage.setItem(LS_KEY, String(hourlyRate));
+    if (persist) {
+      try { localStorage.setItem(LS_KEY, String(hourlyRate)); } catch {}
+    }
   }
 
-  function clearCustomRate() {
+  function clearCustomRate({ persist = true } = {}) {
     delete TEAMS.custom;
     const tab = document.querySelector('.tab[data-team="custom"]');
     if (tab) tab.remove();
     tabEls = document.querySelectorAll('.tab');
-    localStorage.removeItem(LS_KEY);
+    if (persist) {
+      try { localStorage.removeItem(LS_KEY); } catch {}
+    }
     customInput.value = '';
     customError.textContent = '';
     if (currentTeamKey === 'custom') {
       currentTeamKey = null; // force setTeam to apply
-      setTeam('ffp');
+      setTeam('ffp', { persist });
     }
   }
 
@@ -720,14 +725,103 @@
     setCustomRate(rate);
   });
 
-  customResetBtn.addEventListener('click', clearCustomRate);
+  customResetBtn.addEventListener('click', () => clearCustomRate());
 
-  // Restore on load
-  const storedRate = parseFloat(localStorage.getItem(LS_KEY));
+  // ─── session persistence ───────────────────────────────────────
+  const SESSION_KEY = 'meeting-cost:session-v1';
+  const STALE_AFTER_MS = 12 * 60 * 60 * 1000; // 12h cap on running sessions
+
+  function readSession() {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      if (!s || s.v !== 1) return null;
+      return s;
+    } catch { return null; }
+  }
+
+  function writeSession() {
+    try {
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
+        v: 1,
+        teamKey: currentTeamKey,
+        accumulatedMs,
+        isRunning: startTimestamp !== null,
+        runStartedAtMs: startTimestamp,
+        savedAtMs: Date.now(),
+      }));
+    } catch { /* private mode / quota — degrade silently */ }
+  }
+
+  function clearSession() {
+    try { localStorage.removeItem(SESSION_KEY); } catch {}
+  }
+
+  function applySession(session) {
+    if (!session) return;
+    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+
+    const tk = session.teamKey;
+    if (tk && TEAMS[tk] && tk !== currentTeamKey) {
+      setTeam(tk, { persist: false });
+    }
+
+    accumulatedMs = Math.max(0, session.accumulatedMs | 0);
+
+    const ageMs = typeof session.runStartedAtMs === 'number'
+      ? Date.now() - session.runStartedAtMs : Infinity;
+    const validRunning = !!session.isRunning && ageMs >= 0 && ageMs <= STALE_AFTER_MS;
+
+    if (validRunning) {
+      startTimestamp = session.runStartedAtMs;
+      startBtn.disabled = true;
+      startBtn.textContent = 'Start';
+      stopBtn.disabled = false;
+      restartBtn.disabled = false;
+      tick();
+    } else {
+      startTimestamp = null;
+      const hasProgress = accumulatedMs > 0;
+      startBtn.disabled = false;
+      startBtn.textContent = hasProgress ? 'Resume' : 'Start';
+      stopBtn.disabled = true;
+      restartBtn.disabled = !hasProgress;
+      render();
+    }
+  }
+
+  // Restore on load: custom rate first (so TEAMS.custom exists for session restore), then session.
+  let storedRate = NaN;
+  try { storedRate = parseFloat(localStorage.getItem(LS_KEY)); } catch {}
   if (isFinite(storedRate) && storedRate > 0) {
     customInput.value = storedRate;
-    setCustomRate(storedRate);
+    setCustomRate(storedRate, { persist: false });
   }
+  applySession(readSession());
+
+  // Cross-tab sync: react to localStorage changes from other tabs/windows.
+  window.addEventListener('storage', (e) => {
+    if (e.storageArea && e.storageArea !== localStorage) return;
+    if (e.key === SESSION_KEY) {
+      if (e.newValue === null) {
+        // Restart fired in another tab — reset locally without echoing to storage.
+        applySession({ v: 1, teamKey: currentTeamKey, accumulatedMs: 0, isRunning: false, runStartedAtMs: null });
+      } else {
+        try { applySession(JSON.parse(e.newValue)); } catch {}
+      }
+    } else if (e.key === LS_KEY) {
+      if (e.newValue === null) {
+        clearCustomRate({ persist: false });
+      } else {
+        const r = parseFloat(e.newValue);
+        if (isFinite(r) && r > 0) {
+          customInput.value = r;
+          setCustomRate(r, { persist: false });
+        }
+      }
+    }
+  });
 
   function tick() {
     render();
@@ -736,22 +830,24 @@
 
   function start() {
     if (startTimestamp !== null) return;
-    startTimestamp = performance.now();
+    startTimestamp = Date.now();
     startBtn.disabled = true;
     stopBtn.disabled = false;
     restartBtn.disabled = false;
+    writeSession();
     tick();
   }
 
   function stop() {
     if (startTimestamp === null) return;
-    accumulatedMs += performance.now() - startTimestamp;
+    accumulatedMs += Date.now() - startTimestamp;
     startTimestamp = null;
     cancelAnimationFrame(rafId);
     rafId = null;
     startBtn.disabled = false;
     startBtn.textContent = 'Resume';
     stopBtn.disabled = true;
+    writeSession();
     render();
   }
 
@@ -765,6 +861,7 @@
     startBtn.textContent = 'Start';
     stopBtn.disabled = true;
     restartBtn.disabled = true;
+    clearSession();
     render();
   }
 
