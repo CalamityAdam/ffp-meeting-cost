@@ -381,10 +381,10 @@
   const FFP_EPOCH_MS = Date.parse('2026-04-01T00:00:00-05:00');
   const FFP_EPOCH_DATE = '2026-04-01';
   const MS_PER_MINUTE = 60 * 1000;
-  const WORK_START_MIN = 8 * 60;        // 08:00
+  const WORK_START_MIN = 7 * 60;        // 07:00
   const LUNCH_START_MIN = 11 * 60 + 30; // 11:30
   const LUNCH_END_MIN = 12 * 60 + 30;   // 12:30
-  const WORK_END_MIN = 17 * 60;         // 17:00
+  const WORK_END_MIN = 16 * 60;         // 16:00
   const WORK_DAY_MIN = (LUNCH_START_MIN - WORK_START_MIN) + (WORK_END_MIN - LUNCH_END_MIN); // 480
   const WORK_DAY_MS = WORK_DAY_MIN * MS_PER_MINUTE;
 
@@ -417,7 +417,7 @@
   const WEEKEND_MSG = 'Weekend mode — see you Monday 🛋️';
   const LUNCH_MSG = 'Out for lunch 🥪';
   const BEFORE_HOURS_MSG = 'Office isn’t open yet ☕';
-  const AFTER_HOURS_MSG = 'Closed for the day — back at 8 🌙';
+  const AFTER_HOURS_MSG = 'Closed for the day — back at 7 🌙';
 
   const centralPartsFmt = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/Chicago',
