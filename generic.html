@@ -727,20 +727,32 @@
 
   // ─── rate validation (shared by single-rate input AND attendee rows) ──
   // Returns { ok: true, value } or { ok: false, error }. Pure — no side effects.
+  // Min rate is currency-aware: JPY (and other zero-fraction currencies) get a
+  // floor of 1 unit instead of 0.01, otherwise "at least ¥0/hour" reads as a lie.
+  function minHourlyRate() {
+    return fractionDigits() === 0 ? 1 : MIN_HOURLY_RATE;
+  }
   function validateRate(raw) {
     const n = typeof raw === 'number' ? raw : parseFloat(raw);
     if (!isFinite(n)) return { ok: false, error: 'Enter a number.' };
     if (n <= 0) return { ok: false, error: 'Rate must be positive.' };
-    if (n < MIN_HOURLY_RATE) return { ok: false, error: `Rate must be at least ${formatHourly(MIN_HOURLY_RATE)}/hour.` };
+    if (fractionDigits() === 0 && !Number.isInteger(n)) {
+      return { ok: false, error: `${getCurrency().code} doesn't use fractional units — whole numbers only.` };
+    }
+    const min = minHourlyRate();
+    if (n < min) return { ok: false, error: `Rate must be at least ${formatHourly(min)}/hour.` };
     if (n > MAX_HOURLY_RATE) return { ok: false, error: `Whoa — cap is ${formatHourly(MAX_HOURLY_RATE)}/hour.` };
     return { ok: true, value: n };
   }
+  // Use Number() not parseInt() so "1.9" parses to 1.9 (rejected) instead of being
+  // silently truncated to 1. The error text says "whole number"; mean it.
   function validateCount(raw) {
-    const n = typeof raw === 'number' ? raw : parseInt(raw, 10);
+    const n = typeof raw === 'number' ? raw : Number(raw);
     if (!isFinite(n)) return { ok: false, error: 'Enter a whole number.' };
+    if (!Number.isInteger(n)) return { ok: false, error: 'Whole number, please.' };
     if (n < 1) return { ok: false, error: 'Need at least 1 person.' };
     if (n > MAX_ATTENDEE_COUNT) return { ok: false, error: `Per-row cap is ${MAX_ATTENDEE_COUNT.toLocaleString()} people.` };
-    return { ok: true, value: Math.floor(n) };
+    return { ok: true, value: n };
   }
 
   // ─── single-rate form ────────────────────────────────────────────────
@@ -778,6 +790,15 @@
     currentCurrency = code;
     currencySelect.value = code;
     rateSymbolEl.textContent = getCurrency().symbol;
+    // Match the input's step to the currency's fraction digits so JPY can't
+    // ratchet by 0.01 in the spinner.
+    rateInputEl.step = fractionDigits() === 0 ? '1' : '0.01';
+    // Preset price labels and the per-row currency prefixes are re-derived
+    // from currentCurrency on every render. Owning that here means anywhere
+    // applyCurrency is called (URL load, session restore, change handler) the
+    // whole UI snaps to the new symbol — callers don't have to remember.
+    if (presetsEl.children.length) renderPresets();
+    if (rowsEl.children.length) renderRows();
     render();
     return true;
   }
@@ -793,6 +814,7 @@
 
   function renderRows() {
     rowsEl.innerHTML = '';
+    const stepRate = fractionDigits() === 0 ? '1' : '0.01';
     draftRows.forEach((row, idx) => {
       const div = document.createElement('div');
       div.className = 'row';
@@ -805,7 +827,7 @@
         </span>
         <span class="num-wrap">
           <span class="label">${getCurrency().symbol}</span>
-          <input class="rate-input" type="number" min="0" max="${MAX_HOURLY_RATE}" step="0.01" inputmode="decimal" value="${row.rate}" aria-label="Hourly rate" />
+          <input class="rate-input" type="number" min="0" max="${MAX_HOURLY_RATE}" step="${stepRate}" inputmode="decimal" value="${row.rate}" aria-label="Hourly rate" />
           <span class="label">/hr</span>
         </span>
         <button type="button" class="remove" aria-label="Remove row" title="Remove row">×</button>
@@ -821,7 +843,9 @@
     const out = [];
     rowsEl.querySelectorAll('.row').forEach(div => {
       const role = div.querySelector('input.role').value || '';
-      const count = parseInt(div.querySelector('input.count-input').value, 10);
+      // Number() not parseInt() so fractional inputs surface to validateCount
+      // for rejection, not silent truncation.
+      const count = Number(div.querySelector('input.count-input').value);
       const rate = parseFloat(div.querySelector('input.rate-input').value);
       out.push({ role, count, rate });
     });
@@ -921,8 +945,7 @@
   }
   currencySelect.addEventListener('change', () => {
     if (applyCurrency(currencySelect.value)) {
-      renderPresets();   // refresh symbols in preset prices
-      renderRows();      // refresh symbols in row inputs
+      // applyCurrency owns the preset/row re-render now.
       persistSession();
       updateShareLink();
     }
@@ -943,8 +966,12 @@
     }
     if (currentCurrency !== DEFAULT_CURRENCY) params.set('c', currentCurrency);
     if (currentLabel) params.set('n', currentLabel);
-    const base = location.origin + location.pathname;
-    return `${base}?${params.toString()}`;
+    // location.origin is the literal string "null" when the page is opened
+    // from disk via file://. A copied "null/generic.html?..." link is useless,
+    // so fall back to the deployed canonical URL the OG meta already assumes.
+    const origin = (!location.origin || location.origin === 'null') ? 'https://cost.adumb.dev' : location.origin;
+    const path = location.pathname.endsWith('.html') ? location.pathname : '/generic.html';
+    return `${origin}${path}?${params.toString()}`;
   }
   function updateShareLink() {
     const url = buildShareUrl();
@@ -1068,6 +1095,10 @@
         if (total <= MAX_HOURLY_RATE) {
           applyAttendees(rows);
           draftRows = rows.map(r => ({ ...r }));
+          // Without this, the meter shows the URL-driven total but the builder
+          // panel below the fold still shows the default 1-row draft — confusing.
+          renderRows();
+          builderErrorEl.textContent = '';
           return true;
         }
       }
@@ -1140,6 +1171,7 @@
   renderCurrencyOptions();
   currencySelect.value = currentCurrency;
   rateInputEl.value = currentRatePerHour;
+  rateInputEl.step = fractionDigits() === 0 ? '1' : '0.01';
   renderPresets();
   renderRows();
 

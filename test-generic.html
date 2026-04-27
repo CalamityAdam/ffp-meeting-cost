@@ -448,6 +448,81 @@
       assert('B21 LS attendees-source · role labels preserved',
         firstRoleVal === 'Engineers', `got: "${firstRoleVal}"`);
 
+      group('Review-fix regression tests');
+
+      // R1: validateCount rejects fractional input ("1.9" — silently floored before)
+      win = await loadFrame();
+      let r0fix = win.document.querySelector('#attendee-rows .row');
+      r0fix.querySelector('input.count-input').value = '1.9';
+      r0fix.querySelector('input.count-input').dispatchEvent(new win.Event('input', { bubbles: true }));
+      r0fix.querySelector('input.rate-input').value = '100';
+      r0fix.querySelector('input.rate-input').dispatchEvent(new win.Event('input', { bubbles: true }));
+      win.document.getElementById('apply-builder').click();
+      s = readState(win);
+      assert('R1 count "1.9" · rejected (no silent floor)',
+        s.builderError && /whole/i.test(s.builderError),
+        `error: "${s.builderError}"`);
+
+      // R2: ?a=... seeds builder rows (was applying to meter but builder showed default)
+      win = await loadFrame({}, 'a=4x150,2x75');
+      const r2rows = win.document.querySelectorAll('#attendee-rows .row');
+      assert('R2 URL ?a=4x150,2x75 · builder shows 2 rows',
+        r2rows.length === 2, `got: ${r2rows.length} rows`);
+      const r2c0 = r2rows[0]?.querySelector('input.count-input').value;
+      const r2r0 = r2rows[0]?.querySelector('input.rate-input').value;
+      assert('R2 URL ?a · first row populated count=4 rate=150',
+        r2c0 === '4' && r2r0 === '150', `got count=${r2c0} rate=${r2r0}`);
+
+      // R3: applyCurrency from URL re-renders presets and rows (currency symbol propagates)
+      win = await loadFrame({}, 'c=EUR&a=2x100');
+      const r3preset = win.document.querySelector('.preset');
+      assert('R3 URL ?c=EUR · preset price uses €',
+        r3preset && /€/.test(r3preset.textContent),
+        `preset text: "${r3preset?.textContent}"`);
+      const r3rowHTML = win.document.querySelector('#attendee-rows .row')?.innerHTML || '';
+      assert('R3 URL ?c=EUR · attendee row shows € symbol',
+        r3rowHTML.includes('€'),
+        `row HTML did not contain €`);
+
+      // R4: buildShareUrl handles location.origin === 'null' (file://). We can't test
+      // file:// directly inside an iframe served via http://, but we can verify the
+      // URL builder output contains the expected canonical host even when forced.
+      win = await loadFrame({}, 'r=200');
+      // Stash a mocked share-link path by stubbing location.origin via Object.defineProperty
+      // is too invasive — instead, we directly call buildShareUrl with a forced override.
+      // Simpler check: the link as built includes the current host (sanity), and the
+      // pathname ends with .html so the fallback path branch wouldn't fire here.
+      s = readState(win);
+      assert('R4 share link · contains generic.html path',
+        s.shareLink.includes('generic.html'),
+        `link: "${s.shareLink}"`);
+      assert('R4 share link · contains rate param',
+        /[?&]r=200\b/.test(s.shareLink),
+        `link: "${s.shareLink}"`);
+
+      // R5: JPY rejects fractional rates (zero-fraction currency enforcement)
+      win = await loadFrame();
+      const r5sel = win.document.getElementById('currency');
+      r5sel.value = 'JPY';
+      r5sel.dispatchEvent(new win.Event('change', { bubbles: true }));
+      win.document.getElementById('rate-input').value = '60.5';
+      win.document.getElementById('rate-form').dispatchEvent(new win.Event('submit', { cancelable: true, bubbles: true }));
+      s = readState(win);
+      assert('R5 JPY rate 60.5 · rejected (whole numbers only)',
+        s.rateError && /whole|fractional/i.test(s.rateError),
+        `error: "${s.rateError}"`);
+      // R5 part 2: integer JPY rate accepted
+      win.document.getElementById('rate-input').value = '6000';
+      win.document.getElementById('rate-form').dispatchEvent(new win.Event('submit', { cancelable: true, bubbles: true }));
+      s = readState(win);
+      assert('R5 JPY rate 6000 · accepted',
+        !s.rateError && s.rateValue.includes('6,000'),
+        `error: "${s.rateError}" rate: "${s.rateValue}"`);
+      // R5 part 3: input.step is '1' under JPY
+      assert('R5 JPY · rate input step is "1"',
+        win.document.getElementById('rate-input').step === '1',
+        `step: "${win.document.getElementById('rate-input').step}"`);
+
       // B22: Elon Mode is NOT persisted (mirrors the CEO opt-out in index.html)
       win = await loadFrame();
       s = readState(win);
