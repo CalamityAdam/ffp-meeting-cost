@@ -41,6 +41,5 @@ User actions compose `apply* + persist*`. The initial load and the `storage`-eve
 
 ## Workflow
 
-- Working branch is set per session (currently `claude/update-cost-counter-D0YA7`); pushes go to that branch and to `main`.
-- Don't open PRs unless asked — the user pushes directly to `main`.
+- Default branch is `master`. Don't open PRs unless asked — push directly to `master`.
 - After non-trivial changes, run `test.html` (locally via static server + jsdom, or just open in a browser) before committing. Running `/simplify` after a refactor is established practice.
