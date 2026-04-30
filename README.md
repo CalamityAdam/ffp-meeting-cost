@@ -1,8 +1,8 @@
-# Meeting Cost-o-Meter
+# Meeting Cost-o-Meter — FFP edition
 
 A single-page meeting cost calculator. $40/minute, ticking in real time, with an escalating mood that goes from ☕ to 🔥 as the dollars pile up.
 
-Live at **[cost.adumb.dev](https://cost.adumb.dev)**.
+Live at **[cost.adumb.dev](https://cost.adumb.dev)**. The generic, shareable version lives at [CalamityAdam/meeting-cost](https://github.com/CalamityAdam/meeting-cost).
 
 Open `index.html` in a browser, or deploy the folder as a static site (Vercel, Netlify, GitHub Pages — no build step).
 
